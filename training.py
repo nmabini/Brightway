@@ -1,9 +1,10 @@
 import numpy as np
 import cv2, time
-import os, shutil
+import os, shutil, random
 import matplotlib.pyplot as plt
 import random
-from slider import Slider
+
+from joblib import dump, load
 
 from binaryclassifier import BinaryClassifier
 from sklearn.svm import LinearSVC
@@ -18,18 +19,91 @@ negFeatures_arr=[]
 exFeatures_arr=[]
 
 once = 0
-# array to hold boxes to draw on image
-#boxes = []
+
+#### implement train/test split ####
+print("train test split start...")
 
 posImgs = "./p"
 negImgs = "./n"
 timeSplit = time.time()
-if os.path.exists(posImgs):
+if os.path.exists("./train"):
+    shutil.rmtree("./train")
+    os.mkdir("./train/")
+    os.mkdir("./train/pos")
+    os.mkdir("./train/neg")
+else:
+    os.mkdir("./train/")
+    os.mkdir("./train/pos")
+    os.mkdir("./train/neg")
+
+if os.path.exists("./test"):
+    shutil.rmtree("./test")
+    os.mkdir("./test/")
+    os.mkdir("./test/pos")
+    os.mkdir("./test/neg")
+else:
+    os.mkdir("./test/")
+    os.mkdir("./test/pos")
+    os.mkdir("./test/neg")
+
+if os.path.exists("./val"):
+    shutil.rmtree("./val")
+    os.mkdir("./val/")
+    os.mkdir("./val/pos")
+    os.mkdir("./val/neg")
+else:
+    os.mkdir("./val/")
+    os.mkdir("./val/pos")
+    os.mkdir("./val/neg")
+    
+### add training and testing data ###
+src = posImgs
+allFileNames = os.listdir(src)
+np.random.shuffle(allFileNames)
+train_FileNames, val_FileNames, test_FileNames = np.split(np.array(allFileNames), [int(len(allFileNames)*0.8), int(len(allFileNames)*0.85)])
+
+train_FileNames = [src+'/'+name for name in train_FileNames.tolist()]
+val_FileNames = [src+'/'+name for name in val_FileNames.tolist()]
+test_FileNames = [src+'/'+name for name in test_FileNames.tolist()]
+
+for name in train_FileNames:
+    shutil.copy(name, "./train/pos")
+
+for name in test_FileNames:
+    shutil.copy(name, "./test/pos")
+
+for name in val_FileNames:
+    shutil.copy(name, "./val/pos")
+
+src = negImgs
+allFileNames = os.listdir(src)
+np.random.shuffle(allFileNames)
+train_FileNames, val_FileNames, test_FileNames = np.split(np.array(allFileNames), [int(len(allFileNames)*0.8), int(len(allFileNames)*0.85)])
+
+train_FileNames = [src+'/'+name for name in train_FileNames.tolist()]
+val_FileNames = [src+'/'+name for name in val_FileNames.tolist()]
+test_FileNames = [src+'/'+name for name in test_FileNames.tolist()]
+
+for name in train_FileNames:
+    shutil.copy(name, "./train/neg")
+
+for name in test_FileNames:
+    shutil.copy(name, "./test/neg")
+
+for name in val_FileNames:
+    shutil.copy(name, "./val/neg")
+
+pos_train = "./train/pos"
+neg_train = "./train/neg"
+pos_test = "./test/pos"
+neg_test = "./test/neg"
+
+### TRAINING STARTS ###
+if os.path.exists(pos_train):
+    print("posimg feature starts...")
     allFiles = os.listdir(posImgs)
     for img in allFiles:
         image = cv2.imread(posImgs + "/" + img, cv2.COLOR_BGR2GRAY)
-        
-        # hog_image grabs the gradients from each cell
         features, hog_image = hog(image, orientations=8, pixels_per_cell=(16, 16), cells_per_block=(1, 1), visualize=True, multichannel = True)
         posFeatures_arr.append(features)
 
@@ -37,21 +111,21 @@ if os.path.exists(posImgs):
     posFeatures_arr = np.asarray(posFeatures_arr)
     totalvehicles = posFeatures_arr.shape[0] # number of images with vehicles
     
-if os.path.exists(negImgs):
+if os.path.exists(neg_train):
+    print("negimg feature starts...")
     allFiles = os.listdir(negImgs)
-    for img in allFiles:    
+    for img in allFiles:
         image = cv2.imread(negImgs + "/" + img, cv2.COLOR_BGR2GRAY)
-       
-        # hog_image grabs the gradients from each cell
         features, hog_image = hog(image, orientations=8, pixels_per_cell=(16, 16), cells_per_block=(1, 1), visualize=True, multichannel = True)
         negFeatures_arr.append(features)
-    
+        
     negFeatures_arr = np.asarray(negFeatures_arr)
     totalnonvehicles = negFeatures_arr.shape[0] # number of images without vehicles
     
 print()
 print("Feature Extraction time: ", np.round(time.time() - timeSplit, 2))
 timeScale = time.time()
+
 # normalize features before training
 unscaled_x = np.vstack((posFeatures_arr, negFeatures_arr)).astype(np.float64)
 scaler = StandardScaler().fit(unscaled_x) # normalize positive and negative features
@@ -70,33 +144,8 @@ accuracy = svc.score(x_test, y_test)
 print("Training time: ", np.round(time.time()-timeTrain, 2))
 print("Accuracy: ", np.round(accuracy, 4))
 
+### find accuracy with test data ###
+tp_test = time.time()
 
-cap = cv2.VideoCapture(0)
-while True:
-    boxes = []
-    check, frame = cap.read()
-#    eximage = cv2.imread("ford highway.jpg", cv2.COLOR_BGR2GRAY)
-    bc = BinaryClassifier(svc, scaler)
-    # use the slider to feed the classifier the window
-    # define window width and height
-    (winW, winH) = (64, 64)
-
-    timeDetect = time.time()
-    for (x, y, window) in Slider(frame, stepSize=16, windowSize = (winW, winH)):
-        ex_features, ex_hog_image = hog(window, orientations=8, pixels_per_cell=(16, 16), cells_per_block=(1, 1), visualize=True, multichannel = True)
-        arr = ex_features.reshape(1, -1)
-        if(arr.shape == (1, 128)):
-            if bc.predict(arr):
-                boxes.append((x, y, window))
-    print("Time to detection: ", np.round(time.time()-timeDetect, 2))
-    # draw boxes from the array over the image
-    for (x, y, window) in boxes:
-        cv2.rectangle(frame, (x,y),(x+winW, y+winH), (0,255,255), 2)
-    cv2.imshow('Camera Frame', frame)
-    key=cv2.waitKey(0)
-    if (key==27): # Esc key
-        break
-
-cap.release()
-cv2.destroyAllWindows()
-
+dump(svc, 'svc.joblib')
+dump(scaler, 'scaler.joblib')
